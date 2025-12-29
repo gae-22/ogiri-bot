@@ -27,6 +27,7 @@ def main():
     try:
         # Generate topic
         topic = gemini.generate_ogiri_topic()
+        print(f"Generated topic: {topic}")
 
         # Send to Slack
         client.chat_postMessage(
