@@ -65,7 +65,7 @@ class GeminiClient:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-3-pro-preview", contents=prompt
+                model="gemini-3-flash-preview", contents=prompt
             )
             text = response.text
             if text is None:
