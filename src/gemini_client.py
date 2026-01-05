@@ -18,6 +18,7 @@ class GeminiClient:
             raise ValueError("GEMINI_API_KEY environment variable not found")
 
         self.client = genai.Client(api_key=api_key)
+        self.model = "gemini-3-flash-preview"
 
         # Load all prompt files from PROMPTS directory
         self.prompts_dir = Path(__file__).parent.parent / "PROMPTS"
@@ -65,7 +66,7 @@ class GeminiClient:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-3-flash-preview", contents=prompt
+                model=self.model, contents=prompt
             )
             text = response.text
             if text is None:
@@ -93,7 +94,7 @@ class GeminiClient:
 
         try:
             response = self.client.models.generate_content(
-                model="gemini-3-pro-preview", contents=prompt
+                model=self.model, contents=prompt
             )
             text = response.text
             if text is None:
