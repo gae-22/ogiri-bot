@@ -110,3 +110,18 @@ class Database:
         results = cursor.fetchall()
         conn.close()
         return results
+
+    def get_recent_topics(self, limit: int = 20) -> List[str]:
+        """
+        Get the most recent topic texts for anti-repetition.
+        Returns a list of topic strings.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT topic FROM topics ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        results = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return results
