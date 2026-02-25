@@ -19,7 +19,7 @@ def handle_app_mention_events(body, logger, say):
     logger.info(body)
     say("大喜利のお題を考えています...少々お待ちください！")
     try:
-        topic = gemini_client.generate_ogiri_topic()
+        topic, _ = gemini_client.generate_topic()
         say(f"【大喜利お題】\n{topic}")
     except Exception as e:
         logger.error(f"Error handling app_mention: {e}")
@@ -28,14 +28,14 @@ def handle_app_mention_events(body, logger, say):
 
 # Also listen for a specific command if configured in Slack Manifest
 # @app.command("/ogiri")
-# def handle_ogiri_command(ack, say):
-#     ack()
-#     say("大喜利のお題を考えています...少々お待ちください！")
-#     try:
-#         topic = gemini_client.generate_ogiri_topic()
-#         say(f"【大喜利お題】\n{topic}")
-#     except Exception as e:
-#         say("申し訳ありません。エラーが発生しました。")
+    # def handle_ogiri_command(ack, say):
+    #     ack()
+    #     say("大喜利のお題を考えています...少々お待ちください！")
+    #     try:
+    #         topic, _ = gemini_client.generate_topic()
+    #         say(f"【大喜利お題】\n{topic}")
+    #     except Exception as e:
+    #         say("申し訳ありません。エラーが発生しました。")
 
 
 def main():

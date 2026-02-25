@@ -3,6 +3,7 @@ import random
 from pathlib import Path
 from typing import List, Optional, Tuple
 from google import genai
+import time
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -48,7 +49,8 @@ class GeminiClient:
             raise ValueError("GEMINI_API_KEY environment variable not found")
 
         self.client = genai.Client(api_key=api_key)
-        self.model = "gemini-3-flash-preview"
+        # Use a stable model by default to reduce downtime from preview models
+        self.model = "models/gemini-2.5-flash"
 
         # Load all prompt files from PROMPTS directory
         self.prompts_dir = Path(__file__).parent.parent / "PROMPTS"
@@ -120,23 +122,30 @@ class GeminiClient:
         # Format prompt for topic generation
         prompt = template.format(instruction=instruction)
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model, contents=prompt
-            )
-            text = response.text
-            if text is None:
-                return (
-                    "申し訳ありません。お題の生成中にエラーが発生しました。",
-                    prompt_file.name,
+        # Try with retries for transient errors (e.g., 503)
+        max_attempts = 3
+        backoff = 2
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model, contents=prompt
                 )
-            return text.strip(), prompt_file.name
-        except Exception as e:
-            print(f"Error generating topic: {e}")
-            return (
-                "申し訳ありません。お題の生成中にエラーが発生しました。",
-                prompt_file.name,
-            )
+                text = response.text
+                if text is None:
+                    raise RuntimeError("Empty response from model")
+                return text.strip(), prompt_file.name
+            except Exception as e:
+                last_exc = e
+                print(f"Error generating topic (attempt {attempt}): {repr(e)}")
+                # If transient-like error, retry
+                if attempt < max_attempts and (
+                    "503" in str(e) or "UNAVAILABLE" in str(e)
+                ):
+                    time.sleep(backoff * attempt)
+                    continue
+                # Non-retryable or max attempts reached -> raise
+                raise
 
     def generate_answer(self, topic: str) -> str:
         """
@@ -148,17 +157,24 @@ class GeminiClient:
         # Format prompt for answer generation
         prompt = template.format(topic=topic)
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model, contents=prompt
-            )
-            text = response.text
-            if text is None:
-                return "回答例の生成中にエラーが発生しました。"
-            return text.strip()
-        except Exception as e:
-            print(f"Error generating answer: {e}")
-            return "回答例の生成中にエラーが発生しました。"
+        # Retry logic similar to generate_topic
+        max_attempts = 3
+        backoff = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model, contents=prompt
+                )
+                text = response.text
+                if text is None:
+                    raise RuntimeError("Empty response from model")
+                return text.strip()
+            except Exception as e:
+                print(f"Error generating answer (attempt {attempt}): {repr(e)}")
+                if attempt < max_attempts and ("503" in str(e) or "UNAVAILABLE" in str(e)):
+                    time.sleep(backoff * attempt)
+                    continue
+                raise
 
 
 if __name__ == "__main__":

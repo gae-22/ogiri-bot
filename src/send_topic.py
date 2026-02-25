@@ -1,4 +1,10 @@
 import os
+import time
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path so `import src.*` works when running this file directly
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from dotenv import load_dotenv
@@ -58,11 +64,28 @@ def main():
         if not test:
             # 最近のお題を取得して重複回避に使用
             recent_topics = db.get_recent_topics(limit=20)
-            topic, prompt_file = gemini.generate_topic(recent_topics=recent_topics)
-            print(f"Generated topic: {topic}")
-            # Save topic to DB
-            topic_id = db.save_topic(topic, prompt_file)
-            print(f"Saved topic with ID: {topic_id}")
+            try:
+                topic, prompt_file = gemini.generate_topic(recent_topics=recent_topics)
+                print(f"Generated topic: {topic}")
+                # Save topic to DB
+                topic_id = db.save_topic(topic, prompt_file)
+                print(f"Saved topic with ID: {topic_id}")
+            except Exception as e:
+                # Log and notify; do not save placeholder text as a topic
+                print(f"Error generating topic: {e}")
+                try:
+                    client.chat_postMessage(
+                        channel=channel_id,
+                        username="大喜利お題投下Bot",
+                        icon_emoji=":ogiri-bot:",
+                        text=(
+                            "申し訳ありません。お題の生成に失敗しました。"
+                            "しばらくしてから再度お試しください。"
+                        ),
+                    )
+                except Exception as post_err:
+                    print(f"Failed to post error message to Slack: {post_err}")
+                return
         else:
             topic = "【テスト】これはテスト用のダミーお題です。"
             print(
@@ -90,15 +113,19 @@ def main():
         print("Successfully created thread!")
 
         # 3. Generate and save answer for the new topic (do not send yet)
-        time.slpeep(10)  # Short delay to ensure topic is posted before generating answer
+        time.sleep(10)  # Short delay to ensure topic is posted before generating answer
         print("Generating answer for the new topic...")
         if not test:
-            answer = gemini.generate_answer(topic)
-            if topic_id:
-                db.save_answer(topic_id, answer)
-                print("Successfully saved answer to DB!")
-            else:
-                print("Error: Topic ID missing, cannot save answer.")
+            try:
+                answer = gemini.generate_answer(topic)
+                if topic_id:
+                    db.save_answer(topic_id, answer)
+                    print("Successfully saved answer to DB!")
+                else:
+                    print("Error: Topic ID missing, cannot save answer.")
+            except Exception as e:
+                print(f"Error generating answer: {e}")
+                # Do not save an error placeholder as the answer
         else:
             print("GEN_TEST: Skipping answer generation and DB save.")
 
