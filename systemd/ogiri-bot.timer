@@ -1,0 +1,14 @@
+[Unit]
+Description=Run Ogiri Bot daily at 22:00 JST
+
+[Timer]
+# Fire every day at 22:00 JST (Asia/Tokyo = UTC+9)
+OnCalendar=*-*-* 22:00:00 Asia/Tokyo
+# Allow up to 1 minute of variance to reduce thundering-herd on shared hosts
+AccuracySec=1min
+# Re-trigger immediately on the next start if a run was missed (e.g. host was off)
+Persistent=true
+Unit=ogiri-bot.service
+
+[Install]
+WantedBy=timers.target

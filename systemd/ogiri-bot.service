@@ -1,0 +1,27 @@
+[Unit]
+Description=Ogiri Bot — Daily Ogiri Topic Sender
+Documentation=https://github.com/gae-22/ogiri-bot
+# Ensure the network is fully online before making API calls
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gae
+Group=gae
+WorkingDirectory=/home/gae/ogiri-bot
+
+# Runtime environment (secrets are loaded from .env by python-dotenv)
+Environment=TEST=False
+
+# Use the absolute path to uv to avoid PATH lookup issues
+ExecStart=/home/gae/.local/bin/uv run python -m src.send_topic
+
+# --- Security hardening ---
+NoNewPrivileges=true
+PrivateTmp=true
+# Make the whole filesystem read-only, then carve out the DB directory
+ProtectSystem=strict
+ReadWritePaths=/home/gae/ogiri-bot/data
+
+# No [Install] — this unit is activated exclusively by ogiri-bot.timer
