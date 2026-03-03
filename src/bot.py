@@ -1,53 +1,51 @@
+import logging
 import os
+
+from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-from dotenv import load_dotenv
+
+from src.database import Database
 from src.gemini_client import GeminiClient
 
-# Load environment variables
 load_dotenv()
 
-# Initialize Slack App
-app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
+logger = logging.getLogger(__name__)
 
-# Initialize Gemini Client
+app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 gemini_client = GeminiClient()
+db = Database()
 
 
 @app.event("app_mention")
-def handle_app_mention_events(body, logger, say):
-    logger.info(body)
+def handle_app_mention(body: dict, say, logger=logger) -> None:
+    logger.info("app_mention received: %s", body)
     say("大喜利のお題を考えています...少々お待ちください！")
     try:
-        topic, _ = gemini_client.generate_topic()
-        say(f"【大喜利お題】\n{topic}")
-    except Exception as e:
-        logger.error(f"Error handling app_mention: {e}")
+        recent_topics = db.get_recent_topics(limit=20)
+        result = gemini_client.generate_topic(recent_topics=recent_topics)
+        db.save_topic(
+            result.text,
+            result.prompt_file,
+            model_used=result.model_used,
+            format_hint=result.format_hint,
+            creative_angle=result.creative_angle,
+        )
+        say(f"【大喜利お題】\n{result.text}")
+    except Exception:
+        logger.exception("Error handling app_mention.")
         say("申し訳ありません。エラーが発生しました。")
 
 
-# Also listen for a specific command if configured in Slack Manifest
-# @app.command("/ogiri")
-    # def handle_ogiri_command(ack, say):
-    #     ack()
-    #     say("大喜利のお題を考えています...少々お待ちください！")
-    #     try:
-    #         topic, _ = gemini_client.generate_topic()
-    #         say(f"【大喜利お題】\n{topic}")
-    #     except Exception as e:
-    #         say("申し訳ありません。エラーが発生しました。")
-
-
-def main():
+def main() -> None:
     app_token = os.environ.get("SLACK_APP_TOKEN")
     if not app_token:
-        print("Error: SLACK_APP_TOKEN is not set.")
+        logger.error("SLACK_APP_TOKEN is not set.")
         return
-
-    handler = SocketModeHandler(app, app_token)
-    print("⚡️ Ogiri Bot started!")
-    handler.start()
+    logger.info("Starting Ogiri Bot...")
+    SocketModeHandler(app, app_token).start()
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     main()

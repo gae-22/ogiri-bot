@@ -1,7 +1,8 @@
 import os
 import re
-from google import genai
+
 from dotenv import load_dotenv
+from google import genai
 
 load_dotenv()
 
@@ -31,8 +32,8 @@ def get_latest_model(prefer_keyword="flash"):
     for m in models:
         name = m.name
 
-        # Filter for gemini models only
-        if "gemini" not in name:
+        # Filter for gemini models only (name can be None per the SDK type stubs)
+        if name is None or "gemini" not in name:
             continue
 
         # Exclude specific types

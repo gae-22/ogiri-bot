@@ -8,8 +8,9 @@ Usage:
 This script prints model ids and basic metadata. It requires network access
 and a valid `GEMINI_API_KEY` environment variable.
 """
-import os
 import json
+import os
+
 from dotenv import load_dotenv
 
 try:

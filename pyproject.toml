@@ -9,6 +9,61 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "slack-bolt>=1.27.0",
     "schedule>=1.2.2",
-    "ruff>=0.15.4",
-    "ty>=0.0.20",
 ]
+
+[dependency-groups]
+dev = ["ruff>=0.15.4", "ty>=0.0.20"]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter & formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+# target-version is auto-inferred from requires-python = ">=3.11"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade — modernise syntax for Python 3.11+
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions — simplify list/dict/set comprehensions
+    "G",    # flake8-logging-format — enforce %-style logging arguments
+    "LOG",  # flake8-logging — logging best practices
+    "PERF", # perflint — performance anti-patterns
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",    # line too long — handled by the formatter
+    "B904",    # raise within except: allow bare raise in retry loops
+    "PERF203", # try/except in loop — intentional for per-attempt error handling
+    "RUF001",  # ambiguous unicode — intentional full-width Japanese characters
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# ty — type checker
+# ---------------------------------------------------------------------------
+# python-version is auto-inferred from requires-python = ">=3.11"
+
+[tool.ty.src]
+# Limit type checking to application code; exclude scripts/
+include = ["src", "main.py"]
+
+[tool.ty.rules]
+# unresolved-import and unresolved-reference are already "error" by default.
+# Promote default-ignore rules to warn:
+division-by-zero = "warn"
+possibly-unresolved-reference = "warn"
