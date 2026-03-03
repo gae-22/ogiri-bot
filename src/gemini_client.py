@@ -100,7 +100,7 @@ class GeminiClient:
 
         instruction = f"""
 # Task
-このファイルの「Role」「Topic Dimensions」「Format Examples」を踏まえ、面白い大喜利のお題を **1つだけ** 生成してください。
+このファイルの「Role」「Topic Dimensions」「Format Examples」を踏まえ、テレビ番組『IPPONグランプリ』で出題されるような、回答者のセンスが光る最高に面白い大喜利のお題を **1つだけ** 生成してください。
 
 # Thinking Process（内部で実行し、出力には含めないこと）
 1. Topic Dimensions の各軸からランダムに1つずつ要素を選び、組み合わせる
@@ -112,7 +112,7 @@ class GeminiClient:
 - テキストのみで回答できる形式にする（「写真で一言」形式は禁止）
 - 回答者が自由にボケを膨らませられる余白を残す
 - 専門用語を使う場合は、誰もがわかるレベルに留める
-- お題は1〜3文程度の簡潔さにする
+- お題はIPPONグランプリのフリップのように、1〜3文程度で極めてシンプルかつ想像力をかきたてるものにする
 - {angle}考える
 
 # Output Format
@@ -129,6 +129,9 @@ class GeminiClient:
         for attempt in range(1, max_attempts + 1):
             try:
                 response = self.client.models.generate_content(
+                    config=genai.types.GenerateContentConfig(
+                        temperature=1.2,
+                    ),
                     model=self.model, contents=prompt
                 )
                 text = response.text
@@ -163,6 +166,9 @@ class GeminiClient:
         for attempt in range(1, max_attempts + 1):
             try:
                 response = self.client.models.generate_content(
+                    config=genai.types.GenerateContentConfig(
+                        temperature=1.2,
+                    ),
                     model=self.model, contents=prompt
                 )
                 text = response.text
