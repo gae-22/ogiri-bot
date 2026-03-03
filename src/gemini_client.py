@@ -1,5 +1,6 @@
 import os
 import random
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 from google import genai
@@ -49,8 +50,34 @@ class GeminiClient:
             raise ValueError("GEMINI_API_KEY environment variable not found")
 
         self.client = genai.Client(api_key=api_key)
-        # Use a stable model by default to reduce downtime from preview models
-        self.model = "models/gemini-2.5-flash"
+
+        # Dynamically select the best available stable (non-preview, non-exp) pro model
+        # Filter out 'latest' to avoid implicitly hitting models with no free tier quota yet (like gemini-3-pro right now)
+        available_models = [
+            m.name for m in self.client.models.list()
+            if "pro" in m.name
+            and "preview" not in m.name
+            and "exp" not in m.name
+            and "latest" not in m.name
+            and re.search(r"gemini-\d+(\.\d+)?-pro", m.name)
+        ]
+
+        # Sort models in descending order by their version number
+        def get_version(name):
+            match = re.search(r"gemini-(\d+(?:\.\d+)?)-pro", name)
+            return float(match.group(1)) if match else 0.0
+
+        available_models.sort(key=get_version, reverse=True)
+        # Use the latest stable pro model, fallback to a hardcoded string if somehow none are found
+        self.model = available_models[0] if available_models else "models/gemini-2.5-pro"
+        print(f"Selected model: {self.model}")
+
+        # Keep a list of fallback models in case the chosen Pro model hits Free Tier rate limits (limit: 0)
+        self.fallback_models = []
+        for m in available_models:
+            if m != self.model:
+                self.fallback_models.append(m)
+        self.fallback_models.append("models/gemini-2.5-flash") # Ultimate fallback that usually has Free Tier quota
 
         # Load all prompt files from PROMPTS directory
         self.prompts_dir = Path(__file__).parent.parent / "PROMPTS"
@@ -126,29 +153,47 @@ class GeminiClient:
         max_attempts = 3
         backoff = 2
         last_exc = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                response = self.client.models.generate_content(
-                    config=genai.types.GenerateContentConfig(
-                        temperature=1.2,
-                    ),
-                    model=self.model, contents=prompt
-                )
-                text = response.text
-                if text is None:
-                    raise RuntimeError("Empty response from model")
-                return text.strip(), prompt_file.name
-            except Exception as e:
-                last_exc = e
-                print(f"Error generating topic (attempt {attempt}): {repr(e)}")
-                # If transient-like error, retry
-                if attempt < max_attempts and (
-                    "503" in str(e) or "UNAVAILABLE" in str(e)
-                ):
-                    time.sleep(backoff * attempt)
-                    continue
-                # Non-retryable or max attempts reached -> raise
-                raise
+
+        models_to_try = [self.model] + self.fallback_models
+
+        for current_model in models_to_try:
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        config=genai.types.GenerateContentConfig(
+                            temperature=1.2,
+                        ),
+                        model=current_model, contents=prompt
+                    )
+                    text = response.text
+                    if text is None:
+                        raise RuntimeError("Empty response from model")
+
+                    if current_model != self.model:
+                        print(f"Fallback successful: Used {current_model} instead of {self.model}")
+                        self.model = current_model # Update to successful model for subsequent calls
+
+                    return text.strip(), prompt_file.name
+                except Exception as e:
+                    last_exc = e
+                    # If quota exceeded (like limit: 0 for Pro models on free tier), break attempt loop and try next model
+                    error_msg = str(e)
+                    if "429" in error_msg and "limit: 0" in error_msg:
+                        print(f"Model {current_model} has no quota (Free Tier restriction). Falling back to next model...")
+                        break
+
+                    print(f"Error generating topic (model {current_model}, attempt {attempt}): {repr(e)}")
+                    # If transient-like error, retry
+                    if attempt < max_attempts and (
+                        "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg
+                    ):
+                        time.sleep(backoff * attempt)
+                        continue
+                    # Non-retryable or max attempts reached -> try next model if available, else raise at the end
+                    break
+
+        # If all models and attempts failed
+        raise last_exc
 
     def generate_answer(self, topic: str) -> str:
         """
@@ -163,24 +208,42 @@ class GeminiClient:
         # Retry logic similar to generate_topic
         max_attempts = 3
         backoff = 2
-        for attempt in range(1, max_attempts + 1):
-            try:
-                response = self.client.models.generate_content(
-                    config=genai.types.GenerateContentConfig(
-                        temperature=1.2,
-                    ),
-                    model=self.model, contents=prompt
-                )
-                text = response.text
-                if text is None:
-                    raise RuntimeError("Empty response from model")
-                return text.strip()
-            except Exception as e:
-                print(f"Error generating answer (attempt {attempt}): {repr(e)}")
-                if attempt < max_attempts and ("503" in str(e) or "UNAVAILABLE" in str(e)):
-                    time.sleep(backoff * attempt)
-                    continue
-                raise
+        last_exc = None
+
+        models_to_try = [self.model] + self.fallback_models
+
+        for current_model in models_to_try:
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        config=genai.types.GenerateContentConfig(
+                            temperature=1.2,
+                        ),
+                        model=current_model, contents=prompt
+                    )
+                    text = response.text
+                    if text is None:
+                        raise RuntimeError("Empty response from model")
+
+                    if current_model != self.model:
+                        print(f"Fallback successful: Used {current_model} instead of {self.model}")
+                        self.model = current_model # Update to successful model
+
+                    return text.strip()
+                except Exception as e:
+                    last_exc = e
+                    error_msg = str(e)
+                    if "429" in error_msg and "limit: 0" in error_msg:
+                        print(f"Model {current_model} has no quota. Falling back to next model...")
+                        break
+
+                    print(f"Error generating answer (model {current_model}, attempt {attempt}): {repr(e)}")
+                    if attempt < max_attempts and ("503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg):
+                        time.sleep(backoff * attempt)
+                        continue
+                    break
+
+        raise last_exc
 
 
 if __name__ == "__main__":

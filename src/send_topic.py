@@ -19,7 +19,7 @@ def main():
     # Initialize clients
     slack_token = os.environ.get("SLACK_BOT_TOKEN")
     channel_id = os.environ.get("SLACK_CHANNEL_ID", "C0A6CNHTXQR")
-    test_channel_id = os.environ.get("SLACK_TEST_CHANNEL_ID", "C0A6CNHTXQR")
+    os.environ.get("SLACK_TEST_CHANNEL_ID", "C0A6CNHTXQR")
 
     if not slack_token:
         print("Error: SLACK_BOT_TOKEN is not set.")
@@ -56,23 +56,23 @@ def main():
         else:
             print("No unsent answers found.")
 
-        # 2. Generate and send new topic
+        # 2. Generate and save new topic (Always run generation)
         print("Generating new Ogiri topic...")
         topic = None
         topic_id = None
 
-        if not test:
-            # 最近のお題を取得して重複回避に使用
-            recent_topics = db.get_recent_topics(limit=20)
-            try:
-                topic, prompt_file = gemini.generate_topic(recent_topics=recent_topics)
-                print(f"Generated topic: {topic}")
-                # Save topic to DB
-                topic_id = db.save_topic(topic, prompt_file)
-                print(f"Saved topic with ID: {topic_id}")
-            except Exception as e:
-                # Log and notify; do not save placeholder text as a topic
-                print(f"Error generating topic: {e}")
+        # 最近のお題を取得して重複回避に使用
+        recent_topics = db.get_recent_topics(limit=20)
+        try:
+            topic, prompt_file = gemini.generate_topic(recent_topics=recent_topics)
+            print(f"Generated topic: {topic}")
+            # Save topic to DB
+            topic_id = db.save_topic(topic, prompt_file)
+            print(f"Saved topic with ID: {topic_id}")
+        except Exception as e:
+            # Log and notify; do not save placeholder text as a topic
+            print(f"Error generating topic: {e}")
+            if not test:
                 try:
                     client.chat_postMessage(
                         channel=channel_id,
@@ -85,49 +85,45 @@ def main():
                     )
                 except Exception as post_err:
                     print(f"Failed to post error message to Slack: {post_err}")
-                return
-        else:
-            topic = "【テスト】これはテスト用のダミーお題です。"
-            print(
-                f"GEN_TEST: Skipping topic generation and DB save. Using dummy topic: {topic}"
-            )
+            return
 
         # Send topic to Slack
-        response = None
-        response = client.chat_postMessage(
-            channel=channel_id if not test else test_channel_id,
-            username="大喜利お題投下Bot",
-            icon_emoji=":ogiri-bot:",
-            text=f"【本日のお題】\n{topic}\n\n回答はこのスレッドにお願いします！ :thread:",
-        )
-        print("Successfully sent topic to Slack!")
+        if not test:
+            response = client.chat_postMessage(
+                channel=channel_id,
+                username="大喜利お題投下Bot",
+                icon_emoji=":ogiri-bot:",
+                text=f"【本日のお題】\n{topic}\n\n回答はこのスレッドにお願いします！ :thread:",
+            )
+            print("Successfully sent topic to Slack!")
 
-        # Create a thread for answers
-        client.chat_postMessage(
-            channel=channel_id if not test else test_channel_id,
-            thread_ts=response["ts"],
-            username="大喜利お題投下Bot",
-            icon_emoji=":ogiri-bot:",
-            text="回答はこちらのスレッドへ :writing_hand:",
-        )
-        print("Successfully created thread!")
+            # Create a thread for answers
+            client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=response["ts"],
+                username="大喜利お題投下Bot",
+                icon_emoji=":ogiri-bot:",
+                text="回答はこちらのスレッドへ :writing_hand:",
+            )
+            print("Successfully created thread!")
+        else:
+            print("POST_TEST: Skipping sending new topic to Slack.")
 
         # 3. Generate and save answer for the new topic (do not send yet)
-        time.sleep(10)  # Short delay to ensure topic is posted before generating answer
-        print("Generating answer for the new topic...")
         if not test:
-            try:
-                answer = gemini.generate_answer(topic)
-                if topic_id:
-                    db.save_answer(topic_id, answer)
-                    print("Successfully saved answer to DB!")
-                else:
-                    print("Error: Topic ID missing, cannot save answer.")
-            except Exception as e:
-                print(f"Error generating answer: {e}")
-                # Do not save an error placeholder as the answer
-        else:
-            print("GEN_TEST: Skipping answer generation and DB save.")
+            time.sleep(10)  # Short delay to ensure topic is posted before generating answer
+
+        print("Generating answer for the new topic...")
+        try:
+            answer = gemini.generate_answer(topic)
+            if topic_id:
+                db.save_answer(topic_id, answer)
+                print("Successfully saved answer to DB!")
+            else:
+                print("Error: Topic ID missing, cannot save answer.")
+        except Exception as e:
+            print(f"Error generating answer: {e}")
+            # Do not save an error placeholder as the answer
 
     except SlackApiError as e:
         print(f"Error sending message to Slack: {e.response['error']}")
