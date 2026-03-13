@@ -7,8 +7,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=gae
-Group=gae
 WorkingDirectory=/home/gae/ogiri-bot
 
 # Runtime environment (secrets are loaded from .env by python-dotenv)

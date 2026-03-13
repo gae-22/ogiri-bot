@@ -64,7 +64,7 @@ def main() -> None:
         # 2. Generate and save a new topic
         # ----------------------------------------------------------------
         logger.info("Generating new Ogiri topic...")
-        recent_topics = db.get_recent_topics(limit=20)
+        recent_topics = db.get_recent_topics(limit=50)
 
         try:
             result = gemini.generate_topic(recent_topics=recent_topics)

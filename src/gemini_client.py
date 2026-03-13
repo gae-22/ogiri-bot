@@ -156,7 +156,10 @@ class GeminiClient:
 
                     logger.warning(
                         "Generation failed (model=%s, attempt=%d/%d): %r",
-                        model, attempt, max_attempts, exc,
+                        model,
+                        attempt,
+                        max_attempts,
+                        exc,
                     )
 
                     retryable = any(code in error_msg for code in ("503", "UNAVAILABLE", "429"))
@@ -190,14 +193,17 @@ class GeminiClient:
         angle = random.choice(CREATIVE_ANGLES)
         logger.info(
             "Generating topic | prompt=%s | format=%s | angle=%s",
-            prompt_file.name, format_hint, angle,
+            prompt_file.name,
+            format_hint,
+            angle,
         )
 
         recent_section = ""
         if recent_topics:
             topics_list = "\n".join(f"- {t}" for t in recent_topics)
             recent_section = (
-                "\n# Recent Topics（以下は最近出題済み。類似のお題を避けること）\n"
+                "\n# Recent Topics（過去の出題リスト）\n"
+                "以下のリストに含まれるお題と「シチュエーション」「構造」「使用されている単語」「オチの方向性」が似ているものは**絶対に避けて**ください。\n"
                 f"{topics_list}\n"
             )
 
@@ -208,8 +214,9 @@ class GeminiClient:
 # Thinking Process（内部で実行し、出力には含めないこと）
 1. Topic Dimensions の各軸からランダムに1つずつ要素を選び、組み合わせる
 2. Format Examples を参考に、**今回は「{format_hint}」** の形式でお題を構成する
-3. 候補を3つ内部で考え、最も意外性と回答の余白があるものを選ぶ
-4. Anti-patterns に該当しないか確認する
+3. 候補を複数考える。その際、後述の「Recent Topics（過去の出題リスト）」と似たテーマ・構造・キーワードのものがあれば完全に破棄する
+4. 最も意外性と回答の余白があるものを1つ選ぶ
+5. Anti-patterns に該当しないか最終確認する
 {recent_section}
 # Requirements
 - テキストのみで回答できる形式にする（「写真で一言」形式は禁止）
