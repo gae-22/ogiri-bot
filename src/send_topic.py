@@ -123,7 +123,7 @@ def main() -> None:
         # 4. Generate a model answer (stored, not sent until next run)
         # ----------------------------------------------------------------
         if not is_test:
-            time.sleep(10)  # brief delay so the topic post settles
+            time.sleep(3600)  # brief delay so the topic post settles
 
         logger.info("Generating answer for the new topic...")
         try:

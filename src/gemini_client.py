@@ -73,8 +73,12 @@ class AnswerResult:
 
 
 class GeminiClient:
-    _FALLBACK_MODEL = "models/gemini-2.5-flash"
-    _PRO_MODEL_RE = re.compile(r"gemini-(\d+(?:\.\d+)?)-pro")
+    _FALLBACK_MODELS = (
+        "models/gemini-2.5-flash",
+        "models/gemini-2.5-flash-lite",
+    )
+    _FLASH_MODEL_RE = re.compile(r"gemini-(\d+(?:\.\d+)?)-flash(?:-lite)?")
+    _DISALLOWED_PREFIXES = ("-", "*", "1.", "2.", "3.", "お題:", "回答:", "解説:")
 
     def __init__(self) -> None:
         api_key = os.getenv("GEMINI_API_KEY")
@@ -99,26 +103,34 @@ class GeminiClient:
     # ------------------------------------------------------------------
 
     def _build_model_list(self) -> list[str]:
-        """Return stable Pro models sorted by descending version, with a flash fallback."""
+        """Return stable flash models sorted by preference with safe fallbacks."""
 
         def _version(name: str) -> float:
-            m = self._PRO_MODEL_RE.search(name)
+            m = self._FLASH_MODEL_RE.search(name)
             return float(m.group(1)) if m else 0.0
 
-        stable_pro = sorted(
+        def _sort_key(name: str) -> tuple[float, int]:
+            # Prefer newer versions first, and prefer non-lite over lite in the same version.
+            is_lite = 1 if "-lite" in name else 0
+            return (_version(name), -is_lite)
+
+        stable_flash = sorted(
             (
                 m.name
                 for m in self.client.models.list()
                 if m.name is not None
-                and self._PRO_MODEL_RE.search(m.name)
+                and self._FLASH_MODEL_RE.search(m.name)
+                and "image" not in m.name
                 and "preview" not in m.name
                 and "exp" not in m.name
                 and "latest" not in m.name
             ),
-            key=_version,
+            key=_sort_key,
             reverse=True,
         )
-        return [*stable_pro, self._FALLBACK_MODEL]
+        # Keep order and avoid duplicates.
+        ordered = [*stable_flash, *self._FALLBACK_MODELS]
+        return list(dict.fromkeys(ordered))
 
     def _generate_with_retry(self, prompt: str) -> tuple[str, str]:
         """
@@ -148,10 +160,17 @@ class GeminiClient:
                 except Exception as exc:
                     last_exc = exc
                     error_msg = str(exc)
+                    retryable = any(code in error_msg for code in ("503", "UNAVAILABLE", "429"))
+                    high_demand_503 = "503" in error_msg and "high demand" in error_msg.lower()
 
                     # Hard quota exhaustion — no point retrying this model
                     if "429" in error_msg and "limit: 0" in error_msg:
                         logger.warning("Model %s has no quota; trying next model.", model)
+                        break
+
+                    # If a model is overloaded, fail over immediately to the next model.
+                    if high_demand_503:
+                        logger.warning("Model %s is overloaded; failing over to next model.", model)
                         break
 
                     logger.warning(
@@ -162,7 +181,6 @@ class GeminiClient:
                         exc,
                     )
 
-                    retryable = any(code in error_msg for code in ("503", "UNAVAILABLE", "429"))
                     if retryable and attempt < max_attempts:
                         time.sleep(backoff_base * attempt)
                         continue
@@ -172,6 +190,136 @@ class GeminiClient:
 
         assert last_exc is not None  # always set if we reach here
         raise last_exc
+
+    @staticmethod
+    def _normalize_single_line(text: str) -> str:
+        """Trim wrappers and collapse whitespace for stricter output checks."""
+        cleaned = text.strip().strip('"').strip("'")
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned
+
+    def _topic_validation_errors(self, topic: str, format_hint: str) -> list[str]:
+        errors: list[str] = []
+        t = self._normalize_single_line(topic)
+
+        if not t:
+            return ["empty output"]
+        if any(t.startswith(prefix) for prefix in self._DISALLOWED_PREFIXES):
+            errors.append("must output plain topic text only")
+        if "\n" in topic.strip():
+            errors.append("must be a single line topic")
+
+        # Lightweight format-consistency checks based on the selected hint.
+        if "穴埋め形式" in format_hint and ("〇〇" not in t and "___" not in t):
+            errors.append("fill-in format requires 〇〇 or ___")
+        if "もしも形式" in format_hint and "もし" not in t:
+            errors.append("if-format requires もし")
+        if "ランキング形式" in format_hint and not any(
+            token in t for token in ("ランキング", "順位", "第1位", "1位")
+        ):
+            errors.append("ranking format requires ranking-like cue words")
+        if "こんな〇〇は嫌だ" in format_hint and (
+            "こんな" not in t or ("嫌だ" not in t and "ヤダ" not in t)
+        ):
+            errors.append("dislike format requires こんな and 嫌だ")
+
+        return errors
+
+    def _format_contract(self, format_hint: str) -> str:
+        """Return strict-but-readable format contract text for the selected hint."""
+        if "穴埋め形式" in format_hint:
+            return "- 空欄（〇〇 または ___）を必ず含める"
+        if "シチュエーション → 行動形式" in format_hint:
+            return "- 前半で状況を示し、後半を『何をした？』『何が起きた？』で問う"
+        if "こんな〇〇は嫌だ" in format_hint:
+            return "- 『こんな◯◯は嫌だ。』を含め、どこが嫌かを問う"
+        if "もしも形式" in format_hint:
+            return "- 『もし』で始める仮定文にする"
+        if "ランキング形式" in format_hint:
+            return "- 『ランキング』『順位』『第1位』のいずれかを必ず含める"
+        if "架空の〇〇形式" in format_hint:
+            return "- 架空のタイトル・商品・制度などを題材に問う"
+        if "対比・選択形式" in format_hint:
+            return "- 2つの選択肢や対比を明示する"
+        if "ことわざ・格言パロディ形式" in format_hint:
+            return "- 既存のことわざ・名言の改変を問う"
+        if "時系列形式" in format_hint:
+            return "- 時間経過（例: 1日目→1ヶ月後→1年後）を含める"
+        if "無機物・概念の擬人化形式" in format_hint:
+            return "- 無機物または概念を擬人化して発言・行動を問う"
+        if "注意書き・取扱説明書形式" in format_hint:
+            return "- 注意書き・取扱説明書の文体を含める"
+        if "かるた・辞書形式" in format_hint:
+            return "- 読み札または辞書定義の体裁を含める"
+        return "- 選択された形式に合う構造を明示する"
+
+    def _answer_validation_errors(self, answer: str, topic: str) -> list[str]:
+        errors: list[str] = []
+        a = self._normalize_single_line(answer)
+
+        if not a:
+            return ["empty output"]
+        if any(a.startswith(prefix) for prefix in self._DISALLOWED_PREFIXES):
+            errors.append("must output answer text only")
+        if "\n" in answer.strip():
+            errors.append("must be a single line answer")
+        if "？" in a or "?" in a:
+            errors.append("answer should be a punchline, not a question")
+
+        # Weak duplication guard: avoid returning near-copy of the topic.
+        if topic and a in topic:
+            errors.append("answer should not repeat words from the topic verbatim")
+
+        return errors
+
+    def _regenerate_topic_with_feedback(
+        self,
+        template: str,
+        instruction: str,
+        format_hint: str,
+        draft_topic: str,
+        errors: list[str],
+    ) -> tuple[str, str]:
+        feedback = "\n- ".join(errors)
+        contract = self._format_contract(format_hint)
+        repair_instruction = f"""\
+{instruction}
+
+# Previous Output (invalid)
+{draft_topic}
+
+# Validation Errors
+- {feedback}
+
+# Fix Request
+- 形式要件を必ず満たすこと
+- 次の形式契約を厳守すること: {contract}
+- 出力はお題テキスト1行のみ
+"""
+        return self._generate_with_retry(template.format(instruction=repair_instruction))
+
+    def _regenerate_answer_with_feedback(
+        self,
+        template: str,
+        topic: str,
+        draft_answer: str,
+        errors: list[str],
+    ) -> tuple[str, str]:
+        feedback = "\n- ".join(errors)
+        repair_template = f"""\
+{template}
+
+# Previous Output (invalid)
+{draft_answer}
+
+# Validation Errors
+- {feedback}
+
+# Fix Request
+- お題に対するボケ回答として成立させる
+- 出力は回答テキスト1行のみ
+"""
+        return self._generate_with_retry(repair_template.format(topic=topic))
 
     # ------------------------------------------------------------------
     # Public API
@@ -211,6 +359,9 @@ class GeminiClient:
 # Task
 このファイルの「Role」「Topic Dimensions」「Format Examples」を踏まえ、テレビ番組『IPPONグランプリ』で出題されるような、回答者のセンスが光る最高に面白い大喜利のお題を **1つだけ** 生成してください。
 
+    # Selected Format Contract
+    {self._format_contract(format_hint)}
+
 # Thinking Process（内部で実行し、出力には含めないこと）
 1. Topic Dimensions の各軸からランダムに1つずつ要素を選び、組み合わせる
 2. Format Examples を参考に、**今回は「{format_hint}」** の形式でお題を構成する
@@ -222,14 +373,45 @@ class GeminiClient:
 - テキストのみで回答できる形式にする（「写真で一言」形式は禁止）
 - 回答者が自由にボケを膨らませられる余白を残す
 - 専門用語を使う場合は、誰もがわかるレベルに留める
-- お題はIPPONグランプリのフリップのように、1〜3文程度で極めてシンプルかつ想像力をかきたてるものにする
+- お題はIPPONグランプリのフリップのように、1文で極めてシンプルかつ想像力をかきたてるものにする
+- 長さは「短い一言お題」を優先し、目安は25〜55文字
+- 長くなりそうなら情報を削り、主語とオチだけ残す
 - {angle}考える
+- 出力前に「選んだ形式（{format_hint}）に厳密に一致しているか」を自己検証する
+
+# Style Examples（長さ感の参考）
+- 良い: 「新入社員研修3日目、講師が急に配った“謎カード”。何が書いてあった？」
+- 悪い: 「ある会社で新入社員研修が3日間行われ、講師がいろいろ説明したあとに配られたカードには何と書かれていたでしょうか？」
 
 # Output Format
-お題のテキストのみを1つ出力してください。装飾・番号・解説は不要です。
+お題のテキストのみを1つ、1行で出力してください。装飾・番号・解説は不要です。
 """
 
         text, model_used = self._generate_with_retry(template.format(instruction=instruction))
+        text = self._normalize_single_line(text)
+
+        topic_errors = self._topic_validation_errors(text, format_hint)
+        for repair_attempt in range(1, 3):
+            if not topic_errors:
+                break
+            logger.warning(
+                "Topic validation failed; regenerating. attempt=%d/2 errors=%s",
+                repair_attempt,
+                topic_errors,
+            )
+            text, model_used = self._regenerate_topic_with_feedback(
+                template=template,
+                instruction=instruction,
+                format_hint=format_hint,
+                draft_topic=text,
+                errors=topic_errors,
+            )
+            text = self._normalize_single_line(text)
+            topic_errors = self._topic_validation_errors(text, format_hint)
+
+        if topic_errors:
+            raise RuntimeError(f"Topic format validation failed: {topic_errors}")
+
         logger.info("Topic generated | model=%s", model_used)
         return TopicResult(
             text=text,
@@ -250,6 +432,8 @@ class GeminiClient:
         """
         template = self.answer_prompt_path.read_text(encoding="utf-8")
         text, model_used = self._generate_with_retry(template.format(topic=topic))
+        text = self._normalize_single_line(text)
+
         logger.info("Answer generated | model=%s", model_used)
         return AnswerResult(text=text, model_used=model_used)
 
